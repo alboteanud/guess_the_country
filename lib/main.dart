@@ -1,9 +1,13 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:async';
 import 'dart:io';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async' show Future;
+import 'package:flutter/services.dart' show rootBundle;
+import 'dart:convert';
 
 void main() => runApp(new MyApp());
 
@@ -30,75 +34,74 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  File _cachedFile;
-  File _cachedFlag1, _cachedFlag2;
+  File _cachedImage, _cachedSound;
+  AudioPlayer audioPlayer;
+  final int countriesLength = 319;
+  int countryID = 12;
+  String messageOutput = '';
 
-  Future<Null> _downloadFile() async {
-    final String imgName = "${Random().nextInt(319) + 2}.jpg";
+  DocumentSnapshot _countryData;
+  String fakeCountry = "";
+
+  bool coin = false;
+
+  List<dynamic> countryListFakes;
+
+  Future<Null> _downloadImage() async {
+    final String imgName = "$countryID.jpg";
     final Directory tempDir = Directory.systemTemp;
     final File file = File('${tempDir.path}/$imgName');
     print("image: " + imgName);
     final StorageReference ref =
         FirebaseStorage.instance.ref().child("images/" + imgName);
-
     // downloading
     final StorageFileDownloadTask downloadTask = ref.writeToFile(file);
     final int byteNumber = (await downloadTask.future).totalByteCount;
 
-    _downloadFlag(1);
-    _downloadFlag(2);
-
-    setState(() => _cachedFile = file);
+    setState(() => _cachedImage = file);
   }
 
-  Future<Null> _downloadFlag(int flagNo) async {
-    final String imgName = flagNames[Random().nextInt(flagNames.length)];
+  Future<Null> _downloadMusic() async {
+    audioPlayer.stop();
+
+    final String soundName = "${countryID}_x264.mp4";
     final Directory tempDir = Directory.systemTemp;
-    final File file = File('${tempDir.path}/$imgName');
-    print("flag: " + imgName);
+    final File file = File('${tempDir.path}/$soundName');
     final StorageReference ref =
-        FirebaseStorage.instance.ref().child("country_flags/" + imgName);
-
+        FirebaseStorage.instance.ref().child("sounds/" + soundName);
     // downloading
     final StorageFileDownloadTask downloadTask = ref.writeToFile(file);
     final int byteNumber = (await downloadTask.future).totalByteCount;
 
-    if (flagNo == 1)
-      _cachedFlag1 = file;
-    else
-      _cachedFlag2 = file;
+    _cachedSound = file;
+    play();
   }
 
-  buildLayoutBody() {
-    optionRow(final String text, File flagFile) {
+  getLayoutBody() {
+    optionRow(bool isCorrectAnswer) {
+      if (_countryData == null) return Container();
+
       return new Padding(
         padding: new EdgeInsets.only(top: 8.0),
         child: new Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: <Widget>[
             new RaisedButton(
-              child: new Text(text),
+              child: isCorrectAnswer
+                  ? new Text(_countryData["country"])
+                  : new Text(fakeCountry),
               color: Theme.of(context).buttonColor,
               elevation: 2.0,
-//            splashColor: Colors.blueGrey,
               onPressed: () {
                 // Perform some action
+                setState(() {
+                  messageOutput = isCorrectAnswer
+                      ? '${_countryData["country"]} is corect! \n'
+                          '${_countryData["img_title"]}'
+                      : 'Nope! The correct answer is ${_countryData["country"]}!';
+                });
               },
             ),
-//            new SvgPicture.asset("assets/AC.svg",
-
-            flagFile != null
-                ? new SvgPicture.asset(
-                    flagFile.path,
-                    height: 40.0,
-                    width: 80.0,
-                  )
-                : Container(),
-
-//            new SvgPicture.asset(_cachedFlag.path,
-//              height: 40.0,
-//              width: 80.0,
-//            ),
           ],
         ),
       );
@@ -108,16 +111,57 @@ class _MyHomePageState extends State<MyHomePage> {
 //        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: <Widget>[
         Container(
-//            color: Colors.lightGreen,
-
-          child:
-              _cachedFile != null ? Image.asset(_cachedFile.path) : Container(),
-          padding: null,
+          child: _cachedImage != null
+              ? Image.asset(_cachedImage.path)
+              : Container(),
         ),
-        optionRow("RO", _cachedFlag1),
-        optionRow("FR", _cachedFlag2),
+        optionRow(coin),
+        optionRow(!coin),
+        new Padding(
+          padding: new EdgeInsets.only(top: 16.0),
+          child: new Text(
+            '$messageOutput',
+          ),
+        )
       ],
     );
+  }
+
+  updateCountryData() {
+    Firestore.instance
+        .collection('sights_and_sounds_')
+        .document(countryID.toString())
+//        .where("topic", isEqualTo: "flutter")
+        .snapshots()
+        .listen((data) {
+      print(data["country"]);
+      setState(() {
+        _countryData = data;
+        coin = Random().nextBool();
+      });
+    });
+    return;
+  }
+
+  play() async {
+    await audioPlayer.play(_cachedSound.path, isLocal: true);
+  }
+
+  moveToNextCountry() async {
+    cleanUI();
+    countryID = Random().nextInt(countriesLength) + 2;
+    await _downloadImage();
+    await _downloadMusic();
+    updateCountryData();
+    getRandomFakeCountry();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    audioPlayer = new AudioPlayer();
+    loadAssetCountryListFakes();
+    moveToNextCountry();
   }
 
   @override
@@ -126,17 +170,40 @@ class _MyHomePageState extends State<MyHomePage> {
       appBar: new AppBar(
         title: new Text(widget.title),
       ),
-      body: buildLayoutBody(),
+      body: getLayoutBody(),
       floatingActionButton: new FloatingActionButton(
-        onPressed: () async {
-          await _downloadFile();
-//        await _downloadFlag();
+        onPressed: () {
+          moveToNextCountry();
         },
         tooltip: 'Increment',
         child: new Icon(Icons.cloud_download),
       ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
-}
 
-List<String> flagNames = <String>['RO.svg', 'FR.svg', 'AC.svg', 'BG.svg'];
+  Future<String> loadAssetCountryListFakes() async {
+    String data = await rootBundle.loadString('assets/countrycodes.json');
+    countryListFakes = json.decode(data)['countrycodes'];
+    getRandomFakeCountry();
+  }
+
+  getRandomFakeCountry() {
+    setState(() {
+      int n = Random().nextInt(countryListFakes.length);
+      fakeCountry = countryListFakes[n]['name'];
+//      print(fakeCountry);
+    });
+  }
+
+  void cleanUI() {
+    setState(() {
+      _cachedImage = null;
+      _cachedSound = null;
+      audioPlayer.stop();
+      messageOutput = '';
+
+      _countryData = null;
+      fakeCountry = '';
+    });
+  }
+}
